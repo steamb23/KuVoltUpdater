@@ -17,7 +17,17 @@ namespace KuVoltUpdater
 
         Uri origin;
         WebClient web;
+        bool isComplete;
+
+        string applicationPath;
+        string applicationDirectory;
+        Uri applicationDirectoryUri;
+
+        Dictionary<string, string> originChecksums;
+        Dictionary<string, string> localChecksums;
+
         Task integrityCheckTask;
+        Task updateTask;
 
         List<string> updateRequiredFiles = new List<string>();
         public Updater(MainWindow main, string url)
@@ -25,19 +35,144 @@ namespace KuVoltUpdater
             this.main = main;
             this.origin = new Uri(url);
             this.web = new WebClient();
-            this.integrityCheckTask = new Task(IntegrityCheckAction);
 
+            this.applicationPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
+            this.applicationDirectory = Path.GetDirectoryName(applicationPath) + "\\";
+            this.applicationDirectoryUri = new Uri(applicationDirectory);
+
+            web.DownloadProgressChanged += this.UpdateProgress;
         }
         public void IntegrityCheck()
         {
+            this.integrityCheckTask = new Task(IntegrityCheckAction);
             integrityCheckTask.Start();
+        }
+        public void Update()
+        {
+            if (updateRequiredFiles.Count > 0 && !isComplete)
+            {
+                Update(false);
+            }
+            else
+            {
+                Update(true);
+            }
+        }
+        public void ForcedUpdate()
+        {
+            Update(true);
+        }
+        void Update(bool isForced)
+        {
+            this.updateTask = new Task(() =>
+            {
+                UpdateAction(isForced);
+            });
+            this.updateTask.Start();
+        }
+        void UpdateAction(bool isForced)
+        {
+            try
+            {
+                main.updateButton.Dispatcher.Invoke(() =>
+                {
+                    main.updateButton.Content = "다운로드 중...";
+                    main.updateButton.IsEnabled = false;
+                });
+                if (isForced)
+                {
+                    Logger.WriteLine("====강제 파일 다운로드 중...");
+                    var files = originChecksums.Keys.ToList();
+
+                    foreach (string filePath in files)
+                    {
+                        FileDownload(filePath, files.IndexOf(filePath) + 1, files.Count);
+                    }
+                }
+                else
+                {
+                    Logger.WriteLine("====파일 다운로드 중...");
+                    foreach (string filePath in updateRequiredFiles)
+                    {
+                        FileDownload(filePath, updateRequiredFiles.IndexOf(filePath) + 1, updateRequiredFiles.Count);
+                    }
+                }
+                Logger.WriteLine("====다운로드 완료");
+                this.isComplete = true;
+                main.updateButton.Dispatcher.Invoke(() =>
+                {
+                    main.updateButton.Content = "다시 다운로드";
+                    main.updateButton.IsEnabled = true;
+                });
+            }
+            catch (Exception e)
+            {
+                Logger.WriteLine(e.ToString());
+                main.UpdateButtonError();
+            }
+        }
+
+        void FileDownload(string filePath, int currentIndex, int maxIndex)
+        {
+            this.main.downloadProgress.Dispatcher.InvokeAsync(() =>
+            {
+                this.main.downloadProgress.Value = 0;
+            });
+            // 디렉토리 체크
+            string directory = Path.GetDirectoryName(filePath);
+            if (directory != string.Empty && !Directory.Exists(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+            // 다운로드
+            Uri originFile = new Uri(origin, filePath);
+            RETRY:
+            Logger.WriteLine("다운로드 파일 : {1}/{2} - {0}", filePath, currentIndex, maxIndex);
+            Task downloadTask = web.DownloadFileTaskAsync(originFile, filePath);
+            try
+            {
+                downloadTask.Wait();
+            }
+            catch (AggregateException e)
+            {
+                if (e.InnerException != null)
+                {
+                    if (e.InnerException.InnerException != null)
+                    {
+                        if (e.InnerException.InnerException.GetType() == typeof(IOException))
+                        {
+                            goto RETRY;
+                        }
+                    }
+                    else
+                    {
+                        Logger.WriteLine(e.InnerException.ToString());
+                    }
+                }
+                else
+                {
+                    throw e;
+                }
+            }
+            this.main.downloadStatus.Dispatcher.InvokeAsync(() =>
+            {
+                this.main.downloadStatus.Text = "";
+            });
+        }
+        void UpdateProgress(object sender, DownloadProgressChangedEventArgs e)
+        {
+            this.main.downloadProgress.Dispatcher.InvokeAsync(() =>
+            {
+                this.main.downloadProgress.Value = (double)e.BytesReceived / e.TotalBytesToReceive * 100;
+                this.main.downloadStatus.Text = string.Format("{0:N0} KiB / {1:N0} KiB", e.BytesReceived / 1024, e.TotalBytesToReceive / 1024);
+            });
         }
         void IntegrityCheckAction()
         {
             try
             {
-                Dictionary<string, string> originChecksums = GetOriginChecksum();
-                Dictionary<string, string> localChecksums = GetLocalChecksum(originChecksums.Keys.ToArray());
+                originChecksums = GetOriginChecksum();
+                localChecksums = GetLocalChecksum(originChecksums.Keys.ToArray());
 
                 var a = originChecksums.Keys.ToArray();
 
@@ -61,19 +196,24 @@ namespace KuVoltUpdater
                         Logger.WriteLine("존재하지 않음 : {0}", originChecksum.Key);
                     }
                 }
-                main.updateButton.Dispatcher.Invoke(() =>
+                if (updateRequiredFiles.Count > 0)
                 {
-                    if (updateRequiredFiles.Count > 0)
+                    main.updateButton.Dispatcher.Invoke(() =>
                     {
-                        main.updateButton.Content = "업데이트";
+                        main.updateButton.Content = "다운로드";
                         main.updateButton.IsEnabled = true;
-                    }
-                    else
+                    });
+                }
+                else
+                {
+                    main.updateButton.Dispatcher.Invoke(() =>
                     {
-                        main.updateButton.Content = "강제 업데이트";
+                        Logger.WriteLine("파일이 모두 일치합니다.");
+                        main.updateButton.Content = "강제 다운로드";
                         main.updateButton.IsEnabled = true;
-                    }
-                });
+                    });
+                }
+                Logger.WriteLine();
             }
             catch (Exception e)
             {
@@ -88,9 +228,6 @@ namespace KuVoltUpdater
 
             List<string> fileNameList = new List<string>();
             Dictionary<string, string> checksumlist = new Dictionary<string, string>();
-            string thisPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
-            string thisDirectory = Path.GetDirectoryName(thisPath) + "\\";
-            Uri thisDirectoryUri = new Uri(thisDirectory);
 
             DirectoryInfo directory = new DirectoryInfo(".\\");
             var filelist = directory.GetFiles("*", SearchOption.AllDirectories);
@@ -103,7 +240,7 @@ namespace KuVoltUpdater
             {
                 var fullPath = Path.GetFullPath(filePath);
 
-                var relativePath = Uri.UnescapeDataString(thisDirectoryUri.MakeRelativeUri(new Uri(fullPath)).ToString());
+                var relativePath = Uri.UnescapeDataString(applicationDirectoryUri.MakeRelativeUri(new Uri(fullPath)).ToString());
 
                 foreach (string originFilePath in originFileList)
                 {

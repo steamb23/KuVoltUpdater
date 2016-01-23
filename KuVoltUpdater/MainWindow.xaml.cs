@@ -119,5 +119,22 @@ namespace KuVoltUpdater
                 updateButton.Content = "오류!";
             });
         }
+        private void updateButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (Keyboard.IsKeyDown(Key.LeftShift))
+            {
+                this.updater.ForcedUpdate();
+            }
+            else
+            {
+                this.updater.Update();
+            }
+        }
+
+        private void quitButton_Click(object sender, RoutedEventArgs e)
+        {
+            Application.Current.Shutdown();
+        }
+        
     }
 }
