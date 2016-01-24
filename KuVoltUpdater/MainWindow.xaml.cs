@@ -37,10 +37,28 @@ namespace KuVoltUpdater
             Logger.WriteLine();
             ImageSetting();
             Logger.WriteLine();
-            LoadInfo();
-            Logger.WriteLine();
-            this.updater = new Updater(this, origin);
-            updater.IntegrityCheck();
+            try
+            {
+                LoadInfo();
+                Logger.WriteLine();
+                this.updater = new Updater(this, origin);
+                updater.IntegrityCheck();
+            }
+            catch (System.IO.FileNotFoundException)
+            {
+                Logger.WriteLine("====경고 : xml 파일이 없습니다.");
+                UpdateButtonError();
+            }
+            catch (XmlException)
+            {
+                Logger.WriteLine("====경고 : xml 파일을 읽을 수 없습니다.");
+                UpdateButtonError();
+            }
+            catch (UriFormatException)
+            {
+                Logger.WriteLine("====경고 : 원본 위치가 잘못 되었습니다.");
+                UpdateButtonError();
+            }
         }
         void ImageSetting()
         {
@@ -86,31 +104,18 @@ namespace KuVoltUpdater
         }
         void LoadInfo()
         {
-            try
-            {
-                XmlDocument xml = new XmlDocument();
-                string xmlUri = string.Format("{0}.xml", assemblyName.Name);
-                xml.Load(xmlUri);
-                Logger.WriteLine("====xml 로딩 완료...");
+            XmlDocument xml = new XmlDocument();
+            string xmlUri = string.Format("{0}.xml", assemblyName.Name);
+            xml.Load(xmlUri);
+            Logger.WriteLine("====xml 로딩 완료...");
 
-                XmlNode nameNode = xml.SelectSingleNode("KuVolt/Name");
-                Logger.WriteLine("프로젝트 이름 : {0}", nameNode.InnerText);
-                this.Title += " - " + nameNode.InnerText;
+            XmlNode nameNode = xml.SelectSingleNode("KuVolt/Name");
+            Logger.WriteLine("프로젝트 이름 : {0}", nameNode.InnerText);
+            this.Title += " - " + nameNode.InnerText;
 
-                XmlNode originNode = xml.SelectSingleNode("KuVolt/Origin");
-                this.origin = originNode.InnerText;
-                Logger.WriteLine("원본 경로 : {0}", origin);
-            }
-            catch (System.IO.FileNotFoundException)
-            {
-                Logger.WriteLine("====경고 : xml 파일이 없습니다.");
-                UpdateButtonError();
-            }
-            catch (XmlException)
-            {
-                Logger.WriteLine("====경고 : xml 파일을 읽을 수 없습니다.");
-                UpdateButtonError();
-            }
+            XmlNode originNode = xml.SelectSingleNode("KuVolt/Origin");
+            this.origin = originNode.InnerText;
+            Logger.WriteLine("원본 경로 : {0}", origin);
         }
         public void UpdateButtonError()
         {
@@ -135,6 +140,6 @@ namespace KuVoltUpdater
         {
             Application.Current.Shutdown();
         }
-        
+
     }
 }
